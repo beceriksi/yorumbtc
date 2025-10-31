@@ -8,8 +8,8 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 COINS = ["BTCUSDT", "ETHUSDT"]
 TIMEFRAMES = {"Günlük": "1d", "4 Saatlik": "4h"}
-LIMIT = 200  # Mum sayısı
-VOL_MULTIPLIER = 1.5  # Hacim artışı için çarpan
+LIMIT = 200
+VOL_MULTIPLIER = 1.5
 
 # =================== Telegram Fonksiyonu ===================
 def send_telegram(message):
@@ -40,18 +40,15 @@ def get_klines(symbol, interval, limit=LIMIT):
         print(f"API hatası ({symbol} {interval}): {e}")
         return None
 
-# =================== Analiz ===================
+# =================== Analiz + Öneri ===================
 def analyze(df):
-    if len(df) < 20:
-        return ["⚠️ Veri yetersiz, analiz sınırlı"]
-
     df['ema_short'] = df['close'].ewm(span=9, adjust=False).mean()
     df['ema_long'] = df['close'].ewm(span=21, adjust=False).mean()
     df['change'] = df['close'].pct_change()
-    df['vol_avg'] = df['volume'].rolling(10).mean()
+    df['vol_avg'] = df['volume'].rolling(10, min_periods=1).mean()
 
     last = df.iloc[-1]
-    prev = df.iloc[-2]
+    prev = df.iloc[-2] if len(df) > 1 else last
     signals = []
 
     # EMA kesişimi
@@ -60,7 +57,7 @@ def analyze(df):
     elif last['ema_short'] < last['ema_long'] and prev['ema_short'] >= prev['ema_long']:
         signals.append("🔴 EMA kısa altı → Düşüş sinyali")
 
-    # Son mum rengi
+    # Son mum (Price Action)
     if last['close'] > last['open']:
         signals.append("📈 Son mum yeşil → Alıcı baskısı")
     else:
@@ -74,8 +71,8 @@ def analyze(df):
     if -0.01 < last['change'] < 0 and last['volume'] > 5*last['vol_avg']:
         signals.append("🐋 Balina satışı olabilir")
 
-    # Trend yönü (20 mumluk)
-    trend = last['close'] - df['close'].iloc[-20]
+    # Trend yönü
+    trend = last['close'] - df['close'].iloc[0]
     if trend > 0:
         signals.append("⬆️ Kısa dönem trend yukarı")
     elif trend < 0:
@@ -83,21 +80,28 @@ def analyze(df):
     else:
         signals.append("➡️ Trend yatay")
 
-    return signals
+    # Tahmini Öneri
+    recommendation = "Bekle ⚪"
+    if last['ema_short'] > last['ema_long'] and last['close'] > last['open']:
+        recommendation = "BUY 🟢"
+    elif last['ema_short'] < last['ema_long'] and last['close'] < last['open']:
+        recommendation = "SELL 🔴"
+
+    return signals, recommendation
 
 # =================== Main ===================
 def main():
-    print(f"=== Multi-Timeframe Trend Bot Çalışıyor... {datetime.now()} ===")
-    msg = f"📊 BTC & ETH Trend Yorumları ({datetime.now().strftime('%Y-%m-%d %H:%M')})\n\n"
+    print(f"=== PA + EMA Trend Botu Çalışıyor... {datetime.now()} ===")
+    msg = f"📊 BTC & ETH Multi-Timeframe Trend Yorumları ({datetime.now().strftime('%Y-%m-%d %H:%M')})\n\n"
 
     for coin in COINS:
         for label, tf in TIMEFRAMES.items():
             df = get_klines(coin, tf)
             if df is None:
-                msg += f"{coin} ({label}): Veri alınamadı\n"
+                msg += f"{coin} ({label}): Veri alınamadı\n\n"
                 continue
-            analysis = analyze(df)
-            msg += f"{coin} ({label}):\n" + "\n".join(analysis) + "\n\n"
+            signals, recommendation = analyze(df)
+            msg += f"{coin} ({label}):\n" + "\n".join(signals) + f"\nTahmini Öneri: {recommendation}\n\n"
 
     send_telegram(msg)
 
