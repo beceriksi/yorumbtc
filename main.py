@@ -7,8 +7,9 @@ from datetime import datetime
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 COINS = ["BTCUSDT", "ETHUSDT"]
-TIMEFRAMES = {"Günlük": "1d", "Saatlik": "4h"}
-LIMIT = 200  # Daha fazla mum çekiyoruz
+TIMEFRAMES = {"Günlük": "1d", "4 Saatlik": "4h"}
+LIMIT = 200  # Mum sayısı
+VOL_MULTIPLIER = 1.5  # Hacim artışı için çarpan
 
 # =================== Telegram Fonksiyonu ===================
 def send_telegram(message):
@@ -41,49 +42,53 @@ def get_klines(symbol, interval, limit=LIMIT):
 
 # =================== Analiz ===================
 def analyze(df):
-    result = []
-    if len(df) < 10:
+    if len(df) < 20:
         return ["⚠️ Veri yetersiz, analiz sınırlı"]
 
     df['ema_short'] = df['close'].ewm(span=9, adjust=False).mean()
     df['ema_long'] = df['close'].ewm(span=21, adjust=False).mean()
     df['change'] = df['close'].pct_change()
+    df['vol_avg'] = df['volume'].rolling(10).mean()
 
     last = df.iloc[-1]
     prev = df.iloc[-2]
+    signals = []
 
     # EMA kesişimi
     if last['ema_short'] > last['ema_long'] and prev['ema_short'] <= prev['ema_long']:
-        result.append("🟢 EMA kısa üstü → Yükseliş sinyali")
+        signals.append("🟢 EMA kısa üstü → Yükseliş sinyali")
     elif last['ema_short'] < last['ema_long'] and prev['ema_short'] >= prev['ema_long']:
-        result.append("🔴 EMA kısa altı → Düşüş sinyali")
+        signals.append("🔴 EMA kısa altı → Düşüş sinyali")
 
     # Son mum rengi
     if last['close'] > last['open']:
-        result.append("📈 Son mum yeşil → Alıcı baskısı")
+        signals.append("📈 Son mum yeşil → Alıcı baskısı")
     else:
-        result.append("📉 Son mum kırmızı → Satıcı baskısı")
+        signals.append("📉 Son mum kırmızı → Satıcı baskısı")
 
     # Hacim artışı
-    vol_avg = df['volume'].rolling(10).mean().iloc[-1]
-    if last['volume'] > 1.5*vol_avg:  # Esnetildi
-        result.append("💥 Hacim artışı tespit edildi")
+    if last['volume'] > VOL_MULTIPLIER * last['vol_avg']:
+        signals.append("💥 Hacim artışı tespit edildi")
 
-    # Basit trend yorumu (sinyal olmasa bile)
-    trend = df['close'].iloc[-1] - df['close'].iloc[-20]
+    # Balina satışı
+    if -0.01 < last['change'] < 0 and last['volume'] > 5*last['vol_avg']:
+        signals.append("🐋 Balina satışı olabilir")
+
+    # Trend yönü (20 mumluk)
+    trend = last['close'] - df['close'].iloc[-20]
     if trend > 0:
-        result.append("⬆️ Kısa dönem trend yukarı")
+        signals.append("⬆️ Kısa dönem trend yukarı")
     elif trend < 0:
-        result.append("⬇️ Kısa dönem trend aşağı")
+        signals.append("⬇️ Kısa dönem trend aşağı")
     else:
-        result.append("➡️ Trend yatay")
+        signals.append("➡️ Trend yatay")
 
-    return result
+    return signals
 
 # =================== Main ===================
 def main():
-    print(f"=== Trend Bot Çalışıyor... {datetime.now()} ===")
-    msg = f"📊 BTC & ETH Günlük ve Saatlik Trend Yorumları ({datetime.now().strftime('%Y-%m-%d %H:%M')})\n\n"
+    print(f"=== Multi-Timeframe Trend Bot Çalışıyor... {datetime.now()} ===")
+    msg = f"📊 BTC & ETH Trend Yorumları ({datetime.now().strftime('%Y-%m-%d %H:%M')})\n\n"
 
     for coin in COINS:
         for label, tf in TIMEFRAMES.items():
