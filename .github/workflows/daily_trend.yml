@@ -1,8 +1,8 @@
-name: Günlük BTC/ETH Trend Botu
+name: Multi-Timeframe BTC/ETH Trend Botu
 
 on:
   schedule:
-    - cron: '0 10 * * *'   # Her gün saat 10:00 Türkiye saati (UTC+3)
+    - cron: '0 10 * * *'   # Her gün 10:00 Türkiye saati
   workflow_dispatch:
 
 jobs:
