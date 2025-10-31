@@ -8,6 +8,7 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 COINS = ["BTCUSDT", "ETHUSDT"]
 TIMEFRAMES = {"Günlük": "1d", "Saatlik": "4h"}
+LIMIT = 200  # Daha fazla mum çekiyoruz
 
 # =================== Telegram Fonksiyonu ===================
 def send_telegram(message):
@@ -22,7 +23,7 @@ def send_telegram(message):
         print(f"Telegram hatası: {e}")
 
 # =================== Binance API ===================
-def get_klines(symbol, interval, limit=100):
+def get_klines(symbol, interval, limit=LIMIT):
     url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
     try:
         r = requests.get(url, timeout=10)
@@ -42,7 +43,7 @@ def get_klines(symbol, interval, limit=100):
 def analyze(df):
     result = []
     if len(df) < 10:
-        return result
+        return ["⚠️ Veri yetersiz, analiz sınırlı"]
 
     df['ema_short'] = df['close'].ewm(span=9, adjust=False).mean()
     df['ema_long'] = df['close'].ewm(span=21, adjust=False).mean()
@@ -57,7 +58,7 @@ def analyze(df):
     elif last['ema_short'] < last['ema_long'] and prev['ema_short'] >= prev['ema_long']:
         result.append("🔴 EMA kısa altı → Düşüş sinyali")
 
-    # Mum rengi
+    # Son mum rengi
     if last['close'] > last['open']:
         result.append("📈 Son mum yeşil → Alıcı baskısı")
     else:
@@ -65,8 +66,17 @@ def analyze(df):
 
     # Hacim artışı
     vol_avg = df['volume'].rolling(10).mean().iloc[-1]
-    if last['volume'] > 2*vol_avg:
+    if last['volume'] > 1.5*vol_avg:  # Esnetildi
         result.append("💥 Hacim artışı tespit edildi")
+
+    # Basit trend yorumu (sinyal olmasa bile)
+    trend = df['close'].iloc[-1] - df['close'].iloc[-20]
+    if trend > 0:
+        result.append("⬆️ Kısa dönem trend yukarı")
+    elif trend < 0:
+        result.append("⬇️ Kısa dönem trend aşağı")
+    else:
+        result.append("➡️ Trend yatay")
 
     return result
 
@@ -82,10 +92,7 @@ def main():
                 msg += f"{coin} ({label}): Veri alınamadı\n"
                 continue
             analysis = analyze(df)
-            if analysis:
-                msg += f"{coin} ({label}):\n" + "\n".join(analysis) + "\n\n"
-            else:
-                msg += f"{coin} ({label}): Analiz yapılamadı\n\n"
+            msg += f"{coin} ({label}):\n" + "\n".join(analysis) + "\n\n"
 
     send_telegram(msg)
 
