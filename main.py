@@ -9,6 +9,7 @@ CHAT_ID = os.getenv("CHAT_ID")
 INTERVALS = ["1d", "4h"]  # Günlük ve 4 saatlik
 COINS = ["BTCUSDT", "ETHUSDT"]
 VOL_MULTIPLIER = 3  # Hacim patlaması için çarpan
+MIN_ROWS = 20        # Analiz için minimum mum sayısı
 
 # =================== Telegram Fonksiyonları ===================
 def send_telegram(message):
@@ -23,12 +24,12 @@ def send_telegram(message):
         print("Telegram hatası:", e)
 
 # =================== Binance Kline Verisi ===================
-def get_klines(symbol, interval, limit=200):
+def get_klines(symbol, interval, limit=500):
     url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
     try:
         r = requests.get(url, timeout=10)
         data = r.json()
-        if not data:
+        if not data or len(data) < MIN_ROWS:
             return None
         df = pd.DataFrame(data, columns=[
             "open_time","open","high","low","close","volume",
@@ -42,7 +43,7 @@ def get_klines(symbol, interval, limit=200):
 
 # =================== Sinyal Analizi ===================
 def analyze(df):
-    if df is None or df.empty or len(df) < 2:
+    if df is None or len(df) < MIN_ROWS:
         return ["❌ Veri yetersiz, analiz yapılamadı"], "Bekle ⚪"
 
     df['ema_short'] = df['close'].ewm(span=9, adjust=False).mean()
@@ -101,7 +102,7 @@ def main():
         for tf in INTERVALS:
             label = "Günlük" if tf=="1d" else "4 Saatlik"
             df = get_klines(coin, tf)
-            if df is None or df.empty:
+            if df is None or len(df) < MIN_ROWS:
                 msg += f"{coin} ({label}): ❌ Veri yetersiz, analiz yapılamadı\n\n"
                 continue
             signals, recommendation = analyze(df)
