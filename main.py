@@ -19,21 +19,22 @@ def send_telegram(message):
     try:
         r = requests.post(url, data={"chat_id": CHAT_ID, "text": message})
         print(f"Telegram mesaj durumu: {r.status_code}")
-        if r.status_code != 200:
-            print("Hata mesajı:", r.text)
     except Exception as e:
         print("Telegram hatası:", e)
 
 # =================== Binance Kline Verisi ===================
 def get_klines(symbol, interval, limit=200):
-    url = f"https://www.mexc.com/open/api/v2/market/kline?symbol={symbol}&type={interval}&limit={limit}"
+    url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
     try:
         r = requests.get(url, timeout=10)
-        data = r.json().get("data", [])
+        data = r.json()
         if not data:
             return None
-        df = pd.DataFrame(data, columns=["time","open","high","low","close","volume"])
-        df[["open","high","low","close","volume"]] = df[["open","high","low","close","volume"]].astype(float)
+        df = pd.DataFrame(data, columns=[
+            "open_time","open","high","low","close","volume",
+            "close_time","quote_asset_volume","trades","taker_buy_base","taker_buy_quote","ignore"
+        ])
+        df = df[["open","high","low","close","volume"]].astype(float)
         return df
     except Exception as e:
         print(f"API hatası ({symbol} {interval}): {e}")
@@ -93,14 +94,14 @@ def analyze(df):
 
 # =================== Main ===================
 def main():
-    print(f"=== PA + EMA Trend Botu Çalışıyor... {datetime.now()} ===")
-    msg = f"📊 BTC & ETH Günlük ve Saatlik Trend Yorumları ({datetime.now().strftime('%Y-%m-%d %H:%M')})\n\n"
+    print(f"=== Binance PA + EMA Trend Botu Çalışıyor... {datetime.now()} ===")
+    msg = f"📊 BTC & ETH Günlük ve 4 Saatlik Trend Yorumları ({datetime.now().strftime('%Y-%m-%d %H:%M')})\n\n"
 
     for coin in COINS:
         for tf in INTERVALS:
             label = "Günlük" if tf=="1d" else "4 Saatlik"
             df = get_klines(coin, tf)
-            if df is None or df.empty or len(df) < 2:
+            if df is None or df.empty:
                 msg += f"{coin} ({label}): ❌ Veri yetersiz, analiz yapılamadı\n\n"
                 continue
             signals, recommendation = analyze(df)
