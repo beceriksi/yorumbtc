@@ -8,108 +8,103 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 INTERVALS = ["1d", "4h"]  # Günlük ve 4 saatlik
 COINS = ["BTCUSDT", "ETHUSDT"]
-VOL_MULTIPLIER = 3  # Hacim patlaması için çarpan
-MIN_ROWS = 20        # Analiz için minimum mum sayısı
+VOL_MULTIPLIER = 3
+MIN_ROWS = 10  # Günlük veri için düşürüldü
 
-# =================== Telegram Fonksiyonları ===================
+# =================== Telegram Fonksiyonu ===================
 def send_telegram(message):
     if not TELEGRAM_TOKEN or not CHAT_ID:
-        print("❌ Telegram bilgileri eksik! Secretleri kontrol et.")
+        print("❌ Telegram bilgileri eksik")
         return
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     try:
-        r = requests.post(url, data={"chat_id": CHAT_ID, "text": message})
-        print(f"Telegram mesaj durumu: {r.status_code}")
+        requests.post(url, data={"chat_id": CHAT_ID, "text": message})
     except Exception as e:
-        print("Telegram hatası:", e)
+        print("Telegram Error:", e)
 
-# =================== Binance Kline Verisi ===================
-def get_klines(symbol, interval, limit=500):
-    url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
-    try:
-        r = requests.get(url, timeout=10)
-        data = r.json()
-        if not data or len(data) < MIN_ROWS:
-            return None
-        df = pd.DataFrame(data, columns=[
-            "open_time","open","high","low","close","volume",
-            "close_time","quote_asset_volume","trades","taker_buy_base","taker_buy_quote","ignore"
-        ])
-        df = df[["open","high","low","close","volume"]].astype(float)
-        return df
-    except Exception as e:
-        print(f"API hatası ({symbol} {interval}): {e}")
-        return None
+# =================== Binance Kline Fonksiyonu ===================
+def get_klines(symbol, interval, limit=200):
+    for _ in range(3):  # 3 kez dene
+        try:
+            url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
+            r = requests.get(url, timeout=10)
+            data = r.json()
+            if data and len(data) >= MIN_ROWS:
+                df = pd.DataFrame(data, columns=[
+                    "open_time","open","high","low","close","volume",
+                    "close_time","quote_asset_volume","trades","taker_buy_base","taker_buy_quote","ignore"
+                ])
+                df = df[["open","high","low","close","volume"]].astype(float)
+                return df
+        except:
+            pass
+    return None
 
-# =================== Sinyal Analizi ===================
+# =================== Analiz Fonksiyonu ===================
 def analyze(df):
     if df is None or len(df) < MIN_ROWS:
-        return ["❌ Veri yetersiz, analiz yapılamadı"], "Bekle ⚪"
+        return [], "Veri Az"
 
     df['ema_short'] = df['close'].ewm(span=9, adjust=False).mean()
     df['ema_long'] = df['close'].ewm(span=21, adjust=False).mean()
-    df['change'] = df['close'].pct_change()
-    df['vol_avg'] = df['volume'].rolling(10, min_periods=1).mean()
+    df['chg'] = df['close'].pct_change()
+    df['vol_avg'] = df['volume'].rolling(10).mean()
 
     last = df.iloc[-1]
     prev = df.iloc[-2]
     signals = []
 
-    # EMA kesişimi
+    # EMA Cross
     if last['ema_short'] > last['ema_long'] and prev['ema_short'] <= prev['ema_long']:
-        signals.append("🟢 EMA kısa üstü → Yükseliş sinyali")
+        signals.append("🟢 EMA Cross Up (Al Sinyali)")
     elif last['ema_short'] < last['ema_long'] and prev['ema_short'] >= prev['ema_long']:
-        signals.append("🔴 EMA kısa altı → Düşüş sinyali")
+        signals.append("🔴 EMA Cross Down (Sat Sinyali)")
 
-    # Son mum (Price Action)
+    # Mum rengi
     if last['close'] > last['open']:
-        signals.append("📈 Son mum yeşil → Alıcı baskısı")
+        signals.append("📈 Alıcı Baskın")
     else:
-        signals.append("📉 Son mum kırmızı → Satıcı baskısı")
+        signals.append("📉 Satıcı Baskın")
 
-    # Hacim patlaması
+    # Volume
     if last['volume'] > VOL_MULTIPLIER * last['vol_avg']:
-        signals.append("💥 Hacim artışı tespit edildi")
+        signals.append("💥 Hacim Patlaması")
 
-    # Balina satışı
-    if -0.01 < last['change'] < 0 and last['volume'] > 5*last['vol_avg']:
-        signals.append("🐋 Balina satışı olabilir")
-
-    # Trend yönü
-    trend = last['close'] - df['close'].iloc[0]
-    if trend > 0:
-        signals.append("⬆️ Kısa dönem trend yukarı")
-    elif trend < 0:
-        signals.append("⬇️ Kısa dönem trend aşağı")
+    # Trend
+    if last['close'] > df['close'].iloc[0]:
+        signals.append("⬆️ Trend Yukarı")
     else:
-        signals.append("➡️ Trend yatay")
+        signals.append("⬇️ Trend Aşağı")
 
-    # Tahmini Öneri
-    recommendation = "Bekle ⚪"
+    # Öneri
     if last['ema_short'] > last['ema_long'] and last['close'] > last['open']:
-        recommendation = "BUY 🟢"
+        suggestion = "BUY 🟢"
     elif last['ema_short'] < last['ema_long'] and last['close'] < last['open']:
-        recommendation = "SELL 🔴"
+        suggestion = "SELL 🔴"
+    else:
+        suggestion = "BEKLE ⚪"
 
-    return signals, recommendation
+    return signals, suggestion
 
 # =================== Main ===================
 def main():
-    print(f"=== Binance PA + EMA Trend Botu Çalışıyor... {datetime.now()} ===")
-    msg = f"📊 BTC & ETH Günlük ve 4 Saatlik Trend Yorumları ({datetime.now().strftime('%Y-%m-%d %H:%M')})\n\n"
+    print(f"=== Çalışıyor... {datetime.now()} ===")
+    msg = f"📊 Günlük + 4H Trend Analizi ({datetime.now().strftime('%Y-%m-%d %H:%M')})\n\n"
 
     for coin in COINS:
-        for tf in INTERVALS:
-            label = "Günlük" if tf=="1d" else "4 Saatlik"
-            df = get_klines(coin, tf)
-            if df is None or len(df) < MIN_ROWS:
-                msg += f"{coin} ({label}): ❌ Veri yetersiz, analiz yapılamadı\n\n"
-                continue
-            signals, recommendation = analyze(df)
-            msg += f"{coin} ({label}):\n" + "\n".join(signals) + f"\nTahmini Öneri: {recommendation}\n\n"
+        for t in INTERVALS:
+            df = get_klines(coin, t)
+            label = "Günlük" if t=="1d" else "4 Saatlik"
+
+            if df is None:
+                continue  # Sessizce geç
+
+            signals, rec = analyze(df)
+            msg += f"{coin} ({label}):\n"
+            msg += "\n".join(signals) + f"\n➡️ Öneri: {rec}\n\n"
 
     send_telegram(msg)
-    print("✅ Telegram mesajı gönderildi.")
+    print("✅ Gönderildi")
 
 if __name__ == "__main__":
     main()
