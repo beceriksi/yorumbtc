@@ -1,21 +1,38 @@
-name: Liquidation Bot
+name: Binance Liquidation Bot - Saatlik
 
 on:
   schedule:
-    - cron: "0 * * * *"  # Her saat
-  workflow_dispatch:
+    - cron: '0 * * * *'  # Her saat başı
+  workflow_dispatch:  # İster manuel de çalıştırabilirsin
 
 jobs:
-  run-bot:
+  run-liquidation-bot:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v3
+      - name: Repo'yu çek
+        uses: actions/checkout@v3
+
       - name: Python kur
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
-      - run: pip install pandas requests
-      - run: python main.py
+
+      - name: Gereksinimleri yükle
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas requests
+
+      - name: Telegram Secretleri ayarla
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: |
+          echo "Secretler ayarlandı"
+
+      - name: Liquidation Botu çalıştır
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: |
+          python main.py
