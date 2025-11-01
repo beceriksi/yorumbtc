@@ -17,7 +17,19 @@ def get_liquidations(minutes=60):
     start = end - (minutes * 60 * 1000)
     url = f"https://fapi.binance.com/futures/data/liquidationOrders?startTime={start}&endTime={end}&limit=1000"
     r = requests.get(url)
-    return pd.DataFrame(r.json())
+    try:
+        data = r.json()
+        # Eğer tek obje dönüyorsa listeye çevir
+        if isinstance(data, dict):
+            data = [data]
+        df = pd.DataFrame(data)
+        # side sütunu yoksa boş df
+        if 'side' not in df.columns:
+            return pd.DataFrame()
+        return df
+    except Exception as e:
+        print("Liquidation verisi alınamadı:", e)
+        return pd.DataFrame()
 
 def get_funding(symbol="BTCUSDT"):
     url = f"https://fapi.binance.com/fapi/v1/fundingRate?symbol={symbol}&limit=5"
