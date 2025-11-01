@@ -1,75 +1,71 @@
-import os
-import requests
+import os, requests, time
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-COINS = ["BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","ADAUSDT","DOGEUSDT","AVAXUSDT"]
-TIMEFRAME = "1h"
-MIN_ROWS = 50
-VOL_BOOM = 2.5  # Hacim artış çarpanı
-DROP_LIMIT = -0.7  # %0.7 üstü hızlı düşüş
+def send(msg):
+    if not TOKEN or not CHAT_ID:
+        print("Telegram token yok")
+        return
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
 
-def tg(msg):
-    if TELEGRAM_TOKEN and CHAT_ID:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
+def get_liquidations(minutes=60):
+    end = int(time.time() * 1000)
+    start = end - (minutes * 60 * 1000)
+    url = f"https://fapi.binance.com/futures/data/liquidationOrders?startTime={start}&endTime={end}&limit=1000"
+    r = requests.get(url)
+    return pd.DataFrame(r.json())
 
-def get_klines(symbol):
-    url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={TIMEFRAME}&limit=200"
-    data = requests.get(url).json()
-    if not data or len(data) < MIN_ROWS: return None
-    df = pd.DataFrame(data, columns=["t","o","h","l","c","v","_","_","_","_","_","_"])
-    df = df[["o","h","l","c","v"]].astype(float)
-    return df
+def get_funding(symbol="BTCUSDT"):
+    url = f"https://fapi.binance.com/fapi/v1/fundingRate?symbol={symbol}&limit=5"
+    r = requests.get(url).json()
+    if not r: return 0
+    return float(r[-1]["fundingRate"])
 
-def analyze(df):
-    df["ema20"] = df["c"].ewm(span=20).mean()
-    df["ema50"] = df["c"].ewm(span=50).mean()
-    df["ret"] = df["c"].pct_change()*100
-    df["vol_avg"] = df["v"].rolling(20).mean()
+def get_price(symbol="BTCUSDT"):
+    url = f"https://fapi.binance.com/fapi/v1/ticker/price?symbol={symbol}"
+    return float(requests.get(url).json()["price"])
 
-    last = df.iloc[-1]
-    prev = df.iloc[-2]
+# ---- MAIN ----
+df = get_liquidations()
 
-    # SELL sinyal kriterlerimiz
-    cond_sell = (
-        last["c"] < last["ema20"] < last["ema50"] and
-        last["ret"] < DROP_LIMIT and
-        last["v"] > last["vol_avg"] * VOL_BOOM
-    )
+if df.empty:
+    send("⚠️ Liquidation verisi yok")
+    exit()
 
-    # BUY sinyal kriteri (daha sık)
-    cond_buy = (
-        last["c"] > last["ema20"] > last["ema50"] and
-        last["v"] > last["vol_avg"] * VOL_BOOM
-    )
+buy_liq = df[df["side"]=="BUY"]["price"].count()
+sell_liq = df[df["side"]=="SELL"]["price"].count()
 
-    if cond_sell:
-        return "SELL"
+funding = get_funding()
+price = get_price()
 
-    if cond_buy:
-        return "BUY"
+signal = "⚪ Nötr – büyük balina yönü yok"
 
-    return None
+# BUY sinyali (short squeeze)
+if buy_liq > sell_liq * 1.5 and funding > 0:
+    signal = "🟢 BUY — Short squeeze / Balinalar long"
 
-def main():
-    msg_header = f"📊 *Saatlik Kripto Tarama*\n{datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
-    signals = []
+# SELL sinyali (long squeeze)
+elif sell_liq > buy_liq * 1.5 and funding < 0:
+    signal = "🔴 SELL — Long squeeze / Balinalar short"
 
-    for coin in COINS:
-        df = get_klines(coin)
-        if df is None: continue
-        signal = analyze(df)
-        if signal == "SELL": signals.append(f"🔻 SELL → {coin}")
-        elif signal == "BUY": signals.append(f"🟢 BUY → {coin}")
+msg = f"""
+🧠 Binance Likidasyon Botu
+⏰ {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC
 
-    if not signals:
-        tg(msg_header + "⚪ Şu anda net sinyal yok.")
-    else:
-        tg(msg_header + "\n".join(signals))
+BTC Fiyat: {price}
 
-if __name__ == "__main__":
-    main()
+💥 Son 1 Saat Likidasyonlar:
+- Long likidasyon: {sell_liq}
+- Short likidasyon: {buy_liq}
+
+🏦 Funding: {funding}
+
+📌 Sinyal: {signal}
+"""
+
+send(msg)
+print(msg)
